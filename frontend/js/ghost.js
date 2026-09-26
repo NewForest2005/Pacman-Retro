@@ -6,7 +6,6 @@ const GHOST_COLORS = {
 };
 
 const FRIGHTENED_BLINK_MS = 2000;
-const GHOST_HOME_WAIT_MS = 1000;
 const GHOST_BASE_SPEED = 1.5;
 const GHOST_EYES_SPEED = 3;
 
@@ -23,13 +22,144 @@ function createGhost(spawn) {
     speed: GHOST_BASE_SPEED,
     color: GHOST_COLORS[spawn.id] || "white",
     respawnAt: 0,
+    releaseAt: 0,
+    released: false,
+    leavingJail: false,
+    jailWander: false,
+    jailRoute: [],
+    jailRouteIndex: 0,
+    returnRoute: [],
+    returnRouteIndex: 0,
     stateMachine: new GhostStateMachine()
   };
 }
 
 function updateGhost(ghost, maze) {
   ghost.speed = ghost.stateMachine.isEyes() ? GHOST_EYES_SPEED : GHOST_BASE_SPEED;
+
+  if (ghost.stateMachine.isEyes() && ghost.returnRoute.length) {
+    updateReturnToJail(ghost, maze);
+    return;
+  }
+
+  if (!ghost.released) {
+    if (millis() < ghost.releaseAt) {
+      ghost.jailWander = true;
+      updateJailWander(ghost, maze);
+      return;
+    }
+    ghost.released = true;
+    ghost.leavingJail = true;
+    ghost.jailWander = false;
+    ghost.jailRoute = buildJailRoute(ghost, maze.ghostHouse);
+    ghost.jailRouteIndex = 0;
+  }
+
+  if (ghost.leavingJail) updateJailExit(ghost, maze);
   moveEntity(ghost, maze);
+}
+
+function updateReturnToJail(ghost, maze) {
+  const target = ghost.returnRoute[ghost.returnRouteIndex];
+  if (!target) {
+    ghost.direction = "none";
+    ghost.nextDirection = "none";
+    return;
+  }
+
+  if (atCellCenter(ghost, maze.cellSize) &&
+      ghost.row === target.row && ghost.col === target.col) {
+    ghost.returnRouteIndex++;
+  }
+
+  const nextTarget = ghost.returnRoute[ghost.returnRouteIndex];
+  if (!nextTarget) {
+    ghost.direction = "none";
+    ghost.nextDirection = "none";
+    return;
+  }
+
+  const routeDirection = directionBetween(
+    { row: ghost.row, col: ghost.col },
+    nextTarget
+  );
+  let movementDirection = routeDirection;
+  if (movementDirection === "none" && !atCellCenter(ghost, maze.cellSize)) {
+    const targetX = cellCenter(nextTarget.col, maze.cellSize);
+    const targetY = cellCenter(nextTarget.row, maze.cellSize);
+    if (Math.abs(ghost.x - targetX) > 0.5) {
+      movementDirection = ghost.x < targetX ? "right" : "left";
+    } else if (Math.abs(ghost.y - targetY) > 0.5) {
+      movementDirection = ghost.y < targetY ? "down" : "up";
+    }
+  }
+  ghost.nextDirection = movementDirection;
+  // An eaten ghost can be caught between cells. Give it a direction now so
+  // it can reach the next center instead of waiting forever with "none".
+  if (!atCellCenter(ghost, maze.cellSize)) ghost.direction = movementDirection;
+  moveEntity(ghost, maze);
+}
+
+function updateJailWander(ghost, maze) {
+  if (!atCellCenter(ghost, maze.cellSize)) {
+    moveEntity(ghost, maze);
+    return;
+  }
+
+  const options = Object.keys(DIRECTIONS).filter(direction => canMove(ghost, direction, maze));
+  if (!options.length) {
+    ghost.direction = "none";
+    ghost.nextDirection = "none";
+    return;
+  }
+
+  const forward = options.filter(direction => direction !== OPPOSITE_DIRECTIONS[ghost.direction]);
+  const choices = forward.length ? forward : options;
+  ghost.nextDirection = choices[Math.floor(Math.random() * choices.length)];
+  moveEntity(ghost, maze);
+}
+
+const OPPOSITE_DIRECTIONS = {
+  up: "down",
+  down: "up",
+  left: "right",
+  right: "left"
+};
+
+function updateJailExit(ghost, maze) {
+  if (!atCellCenter(ghost, maze.cellSize)) return;
+
+  const target = ghost.jailRoute[ghost.jailRouteIndex];
+  if (!target) {
+    ghost.leavingJail = false;
+    ghost.nextDirection = "none";
+    return;
+  }
+
+  if (ghost.row === target.row && ghost.col === target.col) {
+    ghost.jailRouteIndex++;
+  }
+
+  const nextTarget = ghost.jailRoute[ghost.jailRouteIndex];
+  if (!nextTarget) {
+    // Continue through the door into the corridor.
+    ghost.leavingJail = false;
+    ghost.nextDirection = "down";
+    return;
+  }
+
+  ghost.nextDirection = directionBetween(
+    { row: ghost.row, col: ghost.col },
+    nextTarget
+  );
+}
+
+function directionBetween(from, to) {
+  if (to.row < from.row) return "up";
+  if (to.row > from.row) return "down";
+  if (to.col < from.col) return "left";
+  if (to.col > from.col) return "right";
+  return "none";
 }
 
 function applyGhostMoves(ghosts, response) {
@@ -114,6 +244,14 @@ function repositionGhost(ghost, spawn) {
 function resetGhost(ghost, spawn) {
   repositionGhost(ghost, spawn);
   ghost.respawnAt = 0;
+  ghost.releaseAt = 0;
+  ghost.released = false;
+  ghost.leavingJail = false;
+  ghost.jailWander = false;
+  ghost.jailRoute = [];
+  ghost.jailRouteIndex = 0;
+  ghost.returnRoute = [];
+  ghost.returnRouteIndex = 0;
   ghost.stateMachine.reset();
 }
 

@@ -1,41 +1,50 @@
-"""Utilidades de grilla sobre el laberinto cargado desde shared/maze.json.
-
-El laberinto ya no se genera en código: vive como dato estático en
-shared/maze.json (única fuente de verdad del proyecto). Este módulo solo
-lo carga y ofrece funciones para consultarlo (vecinos válidos, celdas
-transitables, puntos pendientes).
-"""
+"""Utilities for the single maze loaded from shared/maze.json."""
 
 import json
 from pathlib import Path
 
-_SHARED_DIR = Path(__file__).resolve().parents[2] / "shared"
-_MAZE_PATH = _SHARED_DIR / "maze.json"
+MAZE_PATH = Path(__file__).resolve().parents[2] / "shared" / "maze.json"
+with open(MAZE_PATH, encoding="utf-8") as file:
+    _DATA = json.load(file)
 
-with open(_MAZE_PATH, encoding="utf-8") as f:
-    _DATA = json.load(f)
-
+WALL = 0
+PATH = 1
 ROWS = _DATA["rows"]
 COLS = _DATA["cols"]
 CELL_SIZE = _DATA["cellSize"]
 GRID = _DATA["grid"]
 PLAYER_SPAWN = _DATA["playerSpawn"]
+GHOST_HOUSE = _DATA["ghostHouse"]
 GHOST_SPAWNS = _DATA["ghostSpawns"]
-
-WALL = 0
-PATH = 1
-
+TUNNELS = _DATA.get("tunnels", [])
 _SPAWN_CELLS = {(PLAYER_SPAWN["row"], PLAYER_SPAWN["col"])} | {
-    (g["row"], g["col"]) for g in GHOST_SPAWNS
+    (ghost["row"], ghost["col"]) for ghost in GHOST_SPAWNS
 }
-POWER_PELLET_CELLS = {(p["row"], p["col"]) for p in _DATA["powerPellets"]}
+POWER_PELLET_CELLS = {
+    (pellet["row"], pellet["col"])
+    for pellet in _DATA.get("powerPellets", [])
+}
 
 DIRECTIONS = {
-    "up": (-1, 0),
-    "down": (1, 0),
-    "left": (0, -1),
-    "right": (0, 1),
+    "up": (-1, 0), "down": (1, 0),
+    "left": (0, -1), "right": (0, 1),
 }
+
+
+def is_ghost_house_cell(row, col):
+    cells = GHOST_HOUSE.get("cells")
+    if cells is not None:
+        return (row, col) in {(cell["row"], cell["col"]) for cell in cells}
+    return (GHOST_HOUSE["top"] <= row <= GHOST_HOUSE["bottom"] and
+            GHOST_HOUSE["left"] <= col <= GHOST_HOUSE["right"])
+
+
+def is_ghost_house_interior(row, col):
+    cells = GHOST_HOUSE.get("interiorCells")
+    if cells is not None:
+        return (row, col) in {(cell["row"], cell["col"]) for cell in cells}
+    door = GHOST_HOUSE["door"]
+    return is_ghost_house_cell(row, col) and (row, col) != (door["row"], door["col"])
 
 
 def in_bounds(row, col):
@@ -43,9 +52,7 @@ def in_bounds(row, col):
 
 
 def is_wall(row, col):
-    if not in_bounds(row, col):
-        return True
-    return GRID[row][col] == WALL
+    return not in_bounds(row, col) or GRID[row][col] == WALL
 
 
 def is_walkable(row, col):
@@ -53,35 +60,37 @@ def is_walkable(row, col):
 
 
 def get_neighbors(row, col):
-    """Vecinos transitables en las 4 direcciones, como (fila, col, dirección)."""
     neighbors = []
     for direction, (dr, dc) in DIRECTIONS.items():
         nr, nc = row + dr, col + dc
         if is_walkable(nr, nc):
             neighbors.append((nr, nc, direction))
+    for tunnel in TUNNELS:
+        if row == tunnel["row"] and col == tunnel["leftCol"]:
+            neighbors.append((row, tunnel["rightCol"], "left"))
+        elif row == tunnel["row"] and col == tunnel["rightCol"]:
+            neighbors.append((row, tunnel["leftCol"], "right"))
     return neighbors
 
 
 def pellet_cells():
-    """Todas las celdas de camino con punto (todas menos las de spawn y las super bolas)."""
-    cells = []
-    for r in range(ROWS):
-        for c in range(COLS):
-            if GRID[r][c] == PATH and (r, c) not in _SPAWN_CELLS and (r, c) not in POWER_PELLET_CELLS:
-                cells.append({"row": r, "col": c})
-    return cells
+    return [
+        {"row": row, "col": col}
+        for row in range(ROWS)
+        for col in range(COLS)
+        if GRID[row][col] == PATH
+        and (row, col) not in _SPAWN_CELLS
+        and (row, col) not in POWER_PELLET_CELLS
+        and not is_ghost_house_cell(row, col)
+    ]
 
 
 def to_json():
     return {
-        "rows": ROWS,
-        "cols": COLS,
-        "cellSize": CELL_SIZE,
-        "grid": GRID,
-        "pellets": pellet_cells(),
-        "powerPellets": [
-            {"row": r, "col": c} for r, c in sorted(POWER_PELLET_CELLS)
-        ],
-        "playerSpawn": PLAYER_SPAWN,
-        "ghostSpawns": GHOST_SPAWNS,
+        "rows": ROWS, "cols": COLS, "cellSize": CELL_SIZE,
+        "grid": GRID, "pellets": pellet_cells(),
+        "powerPellets": [{"row": row, "col": col}
+                          for row, col in sorted(POWER_PELLET_CELLS)],
+        "playerSpawn": PLAYER_SPAWN, "ghostHouse": GHOST_HOUSE,
+        "ghostSpawns": GHOST_SPAWNS, "tunnels": TUNNELS,
     }

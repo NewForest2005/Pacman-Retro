@@ -10,9 +10,8 @@ from .agents import GHOST_CLASSES
 app = Flask(__name__)
 CORS(app)
 
-# Los 4 fantasmas se crean una sola vez al arrancar el servidor, en sus
-# celdas de spawn definidas en shared/maze.json, y mantienen su estado
-# entre peticiones.
+# Los fantasmas conservan su estado durante la partida y usan el único
+# laberinto definido en shared/maze.json.
 ghosts = {
     spawn["id"]: GHOST_CLASSES[spawn["id"]](spawn["id"], spawn["row"], spawn["col"])
     for spawn in maze.GHOST_SPAWNS
@@ -36,9 +35,6 @@ def ghosts_move():
     except InvalidGameState as exc:
         return jsonify({"error": str(exc)}), 400
 
-    # El frontend es dueño de la posición final de cada fantasma (por
-    # ejemplo, tras reposicionarlo en su spawn al perder una vida); antes
-    # de decidir, cada agente sincroniza su estado interno con lo recibido.
     for state in ghost_states:
         agent = ghosts.get(state.id)
         if agent is not None:

@@ -1,5 +1,6 @@
 function createPlayer(spawn) {
   return {
+    isPlayer: true,
     row: spawn.row,
     col: spawn.col,
     x: cellCenter(spawn.col, game.maze.cellSize),
